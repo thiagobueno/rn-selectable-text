@@ -46,9 +46,10 @@ using namespace facebook::react;
     }
 }
 
+// Intercepta o "Copiar" de teclados físicos e anula a ação
 - (void)copy:(id)sender
 {
-    // Bloqueado
+    // Bloqueado silenciosamente
 }
 
 @end
@@ -221,30 +222,27 @@ using namespace facebook::react;
 #pragma mark - UITextViewDelegate
 
 // ====================================================================
-// A NOVA API DO IOS 16+ (Estável, Rápida e Imune a Crashes)
+// A NOVA API DO IOS 16+
 // ====================================================================
 - (UIMenu *)textView:(UITextView *)textView editMenuForTextInRange:(NSRange)range suggestedActions:(NSArray<UIMenuElement *> *)suggestedActions API_AVAILABLE(ios(16.0)) {
     NSMutableArray<UIMenuElement *> *customActions = [[NSMutableArray alloc] init];
 
     for (NSString *option in _menuOptions) {
-        // Mapeia o botão diretamente para nossa função sem precisar de hacks de string
         UIAction *action = [UIAction actionWithTitle:option image:nil identifier:nil handler:^(__kindof UIAction * _Nonnull action) {
             [self handleMenuSelection:option];
         }];
         [customActions addObject:action];
     }
 
-    // Retorna APENAS o nosso menu customizado, esmagando as opções padrões da Apple
+    // Retorna apenas nosso menu. A ação "Copiar" nativa exigida pelo sistema é engolida e não aparece.
     return [UIMenu menuWithTitle:@"" children:customActions];
 }
 
 - (void)textViewDidChangeSelection:(UITextView *)textView
 {
     if (@available(iOS 16.0, *)) {
-        // No iOS 16+, a Apple cuida da exibição do menu automaticamente via delegate
         return;
     } else {
-        // Fallback legado para iPhones antigos (iOS 15 ou menor)
         if (textView.selectedRange.length > 0 && _menuOptions.count > 0) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 [self showCustomMenu];
@@ -255,7 +253,6 @@ using namespace facebook::react;
     }
 }
 
-// Fallback apenas para iOS 15 e inferiores
 - (void)showCustomMenu
 {
     if (![_customTextView canBecomeFirstResponder]) return;
@@ -293,12 +290,23 @@ using namespace facebook::react;
     return YES;
 }
 
+// ====================================================================
+// O TRUQUE PARA FORÇAR O MENU A ABRIR
+// ====================================================================
 - (BOOL)canPerformAction:(SEL)action withSender:(id)sender
 {
     NSString *selectorName = NSStringFromSelector(action);
     if ([selectorName hasPrefix:@"customAction_"] && [selectorName hasSuffix:@":"]) {
         return YES;
     }
+    
+    if (@available(iOS 16.0, *)) {
+        // Dizemos para o iOS que podemos copiar. Isso convence o sistema a não abortar o menu.
+        if (action == @selector(copy:)) {
+            return YES;
+        }
+    }
+    
     return NO;
 }
 

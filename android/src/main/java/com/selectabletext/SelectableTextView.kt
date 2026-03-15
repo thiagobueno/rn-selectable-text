@@ -16,6 +16,9 @@ class SelectableTextView : FrameLayout {
   private var menuOptions: Array<String> = emptyArray()
   private var textView: TextView? = null
   
+  // A MÁGICA: Variável para segurar a referência do menu nativo do Android
+  private var currentActionMode: ActionMode? = null
+  
   constructor(context: Context?) : super(context!!)
   constructor(context: Context?, attrs: AttributeSet?) : super(context!!, attrs)
   constructor(context: Context?, attrs: AttributeSet?, defStyleAttr: Int) : super(
@@ -45,6 +48,8 @@ class SelectableTextView : FrameLayout {
     textView.setTextIsSelectable(true)
     textView.customSelectionActionModeCallback = object : ActionMode.Callback {
       override fun onCreateActionMode(mode: ActionMode?, menu: Menu?): Boolean {
+        // Salva a referência da barra nativa do Android assim que ela nasce
+        currentActionMode = mode
         return true
       }
       
@@ -70,7 +75,8 @@ class SelectableTextView : FrameLayout {
       }
       
       override fun onDestroyActionMode(mode: ActionMode?) {
-        // Called when action mode is destroyed
+        // Limpa a referência quando o próprio usuário fecha o menu tocando fora
+        currentActionMode = null
       }
     }
   }
@@ -93,5 +99,17 @@ class SelectableTextView : FrameLayout {
     if (changed && textView == null) {
       setupTextView()
     }
+  }
+
+  // ====================================================================
+  // A CIRURGIA DE SEGURANÇA (Prevenção do Bug das Views que Somem)
+  // ====================================================================
+  override fun onDetachedFromWindow() {
+    super.onDetachedFromWindow()
+    // Se o React Native decidir remover essa View da tela (scroll ou navegação)
+    // e a barra nativa ainda estiver aberta, nós a fechamos à força.
+    // Isso devolve a memória e libera a UI Thread do Android.
+    currentActionMode?.finish()
+    currentActionMode = null
   }
 }

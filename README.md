@@ -117,7 +117,3 @@ Both platforms provide the same API and functionality.
 ## License
 
 MIT
-
----
-
-Made with [create-react-native-library](https://github.com/callstack/react-native-builder-bob)

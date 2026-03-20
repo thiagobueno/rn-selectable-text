@@ -18,10 +18,21 @@ using namespace facebook::react;
 
 @implementation SelectableUITextView
 
+- (void)didMoveToWindow {
+    [super didMoveToWindow];
+    // FIX: iOS 16+ text selection bug after navigation.
+    // When returning to the screen, we force iOS to re-evaluate the interaction state.
+    if (self.window) {
+        BOOL wasSelectable = self.selectable;
+        self.selectable = NO;
+        self.selectable = wasSelectable;
+    }
+}
+
 - (BOOL)canPerformAction:(SEL)action withSender:(id)sender
 {
     // FIX: We explicitly tell iOS that we can perform standard actions.
-    // This prevents the "[UIKitCore] The edit menu did not have performable commands" warning and crash.
+    // This prevents the "[UIKitCore] The edit menu did not have performable commands" warning.
     if (action == @selector(copy:) || action == @selector(selectAll:)) {
         return YES;
     }
@@ -131,13 +142,19 @@ using namespace facebook::react;
 - (void)prepareForRecycle {
     [super prepareForRecycle];
     
+    // FIX: Force drop focus when leaving screen
+    [_customTextView resignFirstResponder];
+    
     [[UIMenuController sharedMenuController] hideMenuFromView:_customTextView];
     [UIMenuController sharedMenuController].menuItems = nil;
     
     _customTextView.text = nil;
     _customTextView.selectedTextRange = nil;
-    _menuOptions = @[];
-    _menuOptionsVector.clear();
+    
+    // CRITICAL FIX: Do NOT clear _menuOptions here. Fabric's prop diffing will handle updates.
+    // If we clear it here, navigating away and back will result in an empty menu and crash iOS.
+    // _menuOptions = @[];
+    // _menuOptionsVector.clear();
     
     [self unhideAllViews:self];
 }
@@ -235,6 +252,11 @@ using namespace facebook::react;
     // FORCING THE FOCUS: ensures the system doesn't dismiss our menu unexpectedly
     [textView becomeFirstResponder];
     
+    // SAFETY NET: If options are empty (due to async loading), return standard copy to avoid crash
+    if (_menuOptions.count == 0) {
+        return [UIMenu menuWithTitle:@"" children:suggestedActions];
+    }
+
     NSMutableArray<UIMenuElement *> *customActions = [[NSMutableArray alloc] init];
 
     for (NSString *option in _menuOptions) {

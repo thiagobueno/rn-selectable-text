@@ -20,6 +20,12 @@ using namespace facebook::react;
 
 - (BOOL)canPerformAction:(SEL)action withSender:(id)sender
 {
+    // FIX: We explicitly tell iOS that we can perform standard actions.
+    // This prevents the "[UIKitCore] The edit menu did not have performable commands" warning and crash.
+    if (action == @selector(copy:) || action == @selector(selectAll:)) {
+        return YES;
+    }
+    
     if (self.parentSelectableTextView) {
         return [self.parentSelectableTextView canPerformAction:action withSender:sender];
     }
@@ -46,10 +52,10 @@ using namespace facebook::react;
     }
 }
 
-// Intercepta o "Copiar" de teclados físicos e anula a ação
+// Intercepts physical keyboard "Copy" and nullifies the action to keep it custom
 - (void)copy:(id)sender
 {
-    // Bloqueado silenciosamente
+    // Silently blocked
 }
 
 @end
@@ -222,9 +228,13 @@ using namespace facebook::react;
 #pragma mark - UITextViewDelegate
 
 // ====================================================================
-// A NOVA API DO IOS 16+
+// THE NEW IOS 16+ API
 // ====================================================================
 - (UIMenu *)textView:(UITextView *)textView editMenuForTextInRange:(NSRange)range suggestedActions:(NSArray<UIMenuElement *> *)suggestedActions API_AVAILABLE(ios(16.0)) {
+    
+    // FORCING THE FOCUS: ensures the system doesn't dismiss our menu unexpectedly
+    [textView becomeFirstResponder];
+    
     NSMutableArray<UIMenuElement *> *customActions = [[NSMutableArray alloc] init];
 
     for (NSString *option in _menuOptions) {
@@ -234,7 +244,7 @@ using namespace facebook::react;
         [customActions addObject:action];
     }
 
-    // Retorna apenas nosso menu. A ação "Copiar" nativa exigida pelo sistema é engolida e não aparece.
+    // Returns only our custom menu. The native "Copy" action required by the system is swallowed and doesn't appear.
     return [UIMenu menuWithTitle:@"" children:customActions];
 }
 
@@ -291,7 +301,7 @@ using namespace facebook::react;
 }
 
 // ====================================================================
-// O TRUQUE PARA FORÇAR O MENU A ABRIR
+// THE TRICK TO FORCE THE MENU TO OPEN AND PREVENT UIKIT WARNINGS
 // ====================================================================
 - (BOOL)canPerformAction:(SEL)action withSender:(id)sender
 {
@@ -300,11 +310,10 @@ using namespace facebook::react;
         return YES;
     }
     
-    if (@available(iOS 16.0, *)) {
-        // Dizemos para o iOS que podemos copiar. Isso convence o sistema a não abortar o menu.
-        if (action == @selector(copy:)) {
-            return YES;
-        }
+    // We tell iOS that we can perform standard actions. 
+    // This convinces the system not to abort the menu rendering.
+    if (action == @selector(copy:) || action == @selector(selectAll:)) {
+        return YES;
     }
     
     return NO;

@@ -20,8 +20,6 @@ using namespace facebook::react;
 
 - (void)didMoveToWindow {
     [super didMoveToWindow];
-    // FIX: iOS 16+ text selection bug after navigation.
-    // When returning to the screen, we force iOS to re-evaluate the interaction state.
     if (self.window) {
         BOOL wasSelectable = self.selectable;
         self.selectable = NO;
@@ -31,12 +29,8 @@ using namespace facebook::react;
 
 - (BOOL)canPerformAction:(SEL)action withSender:(id)sender
 {
-    // FIX: We explicitly tell iOS that we can perform standard actions.
-    // This prevents the "[UIKitCore] The edit menu did not have performable commands" warning.
-    if (action == @selector(copy:) || action == @selector(selectAll:)) {
-        return YES;
-    }
-    
+    // FIX: Remove hardcoded YES. We delegate entirely to the parent logic
+    // to allow complete suppression of the menu in Custom Mode.
     if (self.parentSelectableTextView) {
         return [self.parentSelectableTextView canPerformAction:action withSender:sender];
     }
@@ -63,7 +57,6 @@ using namespace facebook::react;
     }
 }
 
-// Intercepts physical keyboard "Copy" and nullifies the action to keep it custom
 - (void)copy:(id)sender
 {
     // Silently blocked
@@ -142,7 +135,6 @@ using namespace facebook::react;
 - (void)prepareForRecycle {
     [super prepareForRecycle];
     
-    // FIX: Force drop focus when leaving screen
     [_customTextView resignFirstResponder];
     
     [[UIMenuController sharedMenuController] hideMenuFromView:_customTextView];
@@ -151,7 +143,6 @@ using namespace facebook::react;
     _customTextView.text = nil;
     _customTextView.selectedTextRange = nil;
     
-    // CRITICAL FIX: Do NOT clear _menuOptions here. Fabric's prop diffing will handle updates.
     [self unhideAllViews:self];
 }
 
@@ -241,19 +232,14 @@ using namespace facebook::react;
 #pragma mark - UITextViewDelegate
 
 // ====================================================================
-// THE NEW IOS 16+ API
+// REAL-TIME CUSTOM MODE TRACKING
 // ====================================================================
-- (UIMenu *)textView:(UITextView *)textView editMenuForTextInRange:(NSRange)range suggestedActions:(NSArray<UIMenuElement *> *)suggestedActions API_AVAILABLE(ios(16.0)) {
-    
-    // FORCING THE FOCUS: ensures the system doesn't dismiss our menu unexpectedly
-    [textView becomeFirstResponder];
-    
-    // ====================================================================
-    // CUSTOM INVISIBLE MODE: Suppress native menu if array is empty
-    // ====================================================================
-    if (_menuOptions.count == 0) {
-        NSString *selectedText = [textView.text substringWithRange:range];
-        if (selectedText.length > 0) {
+- (void)textViewDidChangeSelection:(UITextView *)textView
+{
+    if (textView.selectedRange.length > 0) {
+        // INVISIBLE MODE (ALL IOS VERSIONS)
+        if (_menuOptions.count == 0) {
+            NSString *selectedText = [textView.text substringWithRange:textView.selectedRange];
             if (auto eventEmitter = std::static_pointer_cast<const SelectableTextViewEventEmitter>(_eventEmitter)) {
                 SelectableTextViewEventEmitter::OnSelection selectionEvent = {
                     .chosenOption = std::string("CUSTOM_MODE"),
@@ -261,10 +247,43 @@ using namespace facebook::react;
                 };
                 eventEmitter->onSelection(selectionEvent);
             }
+            return;
         }
-        // Returns an empty menu, effectively hiding the native UI
+        
+        // STANDARD MODE
+        if (@available(iOS 16.0, *)) {
+            return;
+        } else {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self showCustomMenu];
+            });
+        }
+    } else {
+        [[UIMenuController sharedMenuController] hideMenuFromView:_customTextView];
+        
+        // IF SELECTION IS CLEARED, NOTIFY JS TO HIDE THE BOTTOM SHEET
+        if (_menuOptions.count == 0) {
+             if (auto eventEmitter = std::static_pointer_cast<const SelectableTextViewEventEmitter>(_eventEmitter)) {
+                SelectableTextViewEventEmitter::OnSelection selectionEvent = {
+                    .chosenOption = std::string("CUSTOM_MODE"),
+                    .highlightedText = std::string("")
+                };
+                eventEmitter->onSelection(selectionEvent);
+            }
+        }
+    }
+}
+
+// ====================================================================
+// THE NEW IOS 16+ API
+// ====================================================================
+- (UIMenu *)textView:(UITextView *)textView editMenuForTextInRange:(NSRange)range suggestedActions:(NSArray<UIMenuElement *> *)suggestedActions API_AVAILABLE(ios(16.0)) {
+    
+    if (_menuOptions.count == 0) {
         return [UIMenu menuWithTitle:@"" children:@[]];
     }
+    
+    [textView becomeFirstResponder];
 
     NSMutableArray<UIMenuElement *> *customActions = [[NSMutableArray alloc] init];
 
@@ -276,36 +295,6 @@ using namespace facebook::react;
     }
 
     return [UIMenu menuWithTitle:@"" children:customActions];
-}
-
-- (void)textViewDidChangeSelection:(UITextView *)textView
-{
-    if (@available(iOS 16.0, *)) {
-        return;
-    } else {
-        if (textView.selectedRange.length > 0) {
-            
-            // CUSTOM INVISIBLE MODE FOR IOS < 16
-            if (_menuOptions.count == 0) {
-                NSString *selectedText = [textView.text substringWithRange:textView.selectedRange];
-                if (auto eventEmitter = std::static_pointer_cast<const SelectableTextViewEventEmitter>(_eventEmitter)) {
-                    SelectableTextViewEventEmitter::OnSelection selectionEvent = {
-                        .chosenOption = std::string("CUSTOM_MODE"),
-                        .highlightedText = std::string([selectedText UTF8String])
-                    };
-                    eventEmitter->onSelection(selectionEvent);
-                }
-                [[UIMenuController sharedMenuController] hideMenuFromView:_customTextView];
-                return;
-            }
-            
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self showCustomMenu];
-            });
-        } else {
-            [[UIMenuController sharedMenuController] hideMenuFromView:_customTextView];
-        }
-    }
 }
 
 - (void)showCustomMenu
@@ -346,17 +335,20 @@ using namespace facebook::react;
 }
 
 // ====================================================================
-// THE TRICK TO FORCE THE MENU TO OPEN AND PREVENT UIKIT WARNINGS
+// SUPPRESS SYSTEM MENU IN CUSTOM MODE
 // ====================================================================
 - (BOOL)canPerformAction:(SEL)action withSender:(id)sender
 {
+    // 100% INVISIBLE MODE: iOS is forbidden to render any bubble menu
+    if (_menuOptions.count == 0) {
+        return NO;
+    }
+    
     NSString *selectorName = NSStringFromSelector(action);
     if ([selectorName hasPrefix:@"customAction_"] && [selectorName hasSuffix:@":"]) {
         return YES;
     }
     
-    // We tell iOS that we can perform standard actions. 
-    // This convinces the system not to abort the menu rendering.
     if (action == @selector(copy:) || action == @selector(selectAll:)) {
         return YES;
     }

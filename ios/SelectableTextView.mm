@@ -152,10 +152,6 @@ using namespace facebook::react;
     _customTextView.selectedTextRange = nil;
     
     // CRITICAL FIX: Do NOT clear _menuOptions here. Fabric's prop diffing will handle updates.
-    // If we clear it here, navigating away and back will result in an empty menu and crash iOS.
-    // _menuOptions = @[];
-    // _menuOptionsVector.clear();
-    
     [self unhideAllViews:self];
 }
 
@@ -252,9 +248,22 @@ using namespace facebook::react;
     // FORCING THE FOCUS: ensures the system doesn't dismiss our menu unexpectedly
     [textView becomeFirstResponder];
     
-    // SAFETY NET: If options are empty (due to async loading), return standard copy to avoid crash
+    // ====================================================================
+    // CUSTOM INVISIBLE MODE: Suppress native menu if array is empty
+    // ====================================================================
     if (_menuOptions.count == 0) {
-        return [UIMenu menuWithTitle:@"" children:suggestedActions];
+        NSString *selectedText = [textView.text substringWithRange:range];
+        if (selectedText.length > 0) {
+            if (auto eventEmitter = std::static_pointer_cast<const SelectableTextViewEventEmitter>(_eventEmitter)) {
+                SelectableTextViewEventEmitter::OnSelection selectionEvent = {
+                    .chosenOption = std::string("CUSTOM_MODE"),
+                    .highlightedText = std::string([selectedText UTF8String])
+                };
+                eventEmitter->onSelection(selectionEvent);
+            }
+        }
+        // Returns an empty menu, effectively hiding the native UI
+        return [UIMenu menuWithTitle:@"" children:@[]];
     }
 
     NSMutableArray<UIMenuElement *> *customActions = [[NSMutableArray alloc] init];
@@ -266,7 +275,6 @@ using namespace facebook::react;
         [customActions addObject:action];
     }
 
-    // Returns only our custom menu. The native "Copy" action required by the system is swallowed and doesn't appear.
     return [UIMenu menuWithTitle:@"" children:customActions];
 }
 
@@ -275,7 +283,22 @@ using namespace facebook::react;
     if (@available(iOS 16.0, *)) {
         return;
     } else {
-        if (textView.selectedRange.length > 0 && _menuOptions.count > 0) {
+        if (textView.selectedRange.length > 0) {
+            
+            // CUSTOM INVISIBLE MODE FOR IOS < 16
+            if (_menuOptions.count == 0) {
+                NSString *selectedText = [textView.text substringWithRange:textView.selectedRange];
+                if (auto eventEmitter = std::static_pointer_cast<const SelectableTextViewEventEmitter>(_eventEmitter)) {
+                    SelectableTextViewEventEmitter::OnSelection selectionEvent = {
+                        .chosenOption = std::string("CUSTOM_MODE"),
+                        .highlightedText = std::string([selectedText UTF8String])
+                    };
+                    eventEmitter->onSelection(selectionEvent);
+                }
+                [[UIMenuController sharedMenuController] hideMenuFromView:_customTextView];
+                return;
+            }
+            
             dispatch_async(dispatch_get_main_queue(), ^{
                 [self showCustomMenu];
             });

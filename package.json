@@ -1,6 +1,6 @@
 {
     "name": "@thiagobueno/rn-selectable-text",
-    "version": "1.0.5",
+    "version": "1.0.4",
     "type": "module",
     "description": "A library for custom text selection menus",
     "main": "./lib/module/index.js",

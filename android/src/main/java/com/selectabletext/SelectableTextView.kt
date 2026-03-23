@@ -5,6 +5,8 @@ import android.util.AttributeSet
 import android.view.ActionMode
 import android.view.Menu
 import android.view.MenuItem
+import android.view.View
+import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.TextView
 import com.facebook.react.bridge.Arguments
@@ -16,7 +18,7 @@ class SelectableTextView : FrameLayout {
   private var menuOptions: Array<String> = emptyArray()
   private var textView: TextView? = null
   
-  // A MÁGICA: Variável para segurar a referência do menu nativo do Android
+  // Holds the reference to the native Android ActionMode (the text selection menu)
   private var currentActionMode: ActionMode? = null
   
   constructor(context: Context?) : super(context!!)
@@ -48,13 +50,33 @@ class SelectableTextView : FrameLayout {
     textView.setTextIsSelectable(true)
     textView.customSelectionActionModeCallback = object : ActionMode.Callback {
       override fun onCreateActionMode(mode: ActionMode?, menu: Menu?): Boolean {
-        // Salva a referência da barra nativa do Android assim que ela nasce
+        // Save the reference of the native Android bar as soon as it is created
         currentActionMode = mode
         return true
       }
       
       override fun onPrepareActionMode(mode: ActionMode?, menu: Menu?): Boolean {
         menu?.clear()
+        
+        // ====================================================================
+        // CUSTOM INVISIBLE MODE: Suppress native menu if array is empty
+        // ====================================================================
+        if (menuOptions.isEmpty()) {
+            // Trick to hide the native action bar: assign a 1x1 pixel empty view
+            val view = View(context)
+            view.layoutParams = ViewGroup.LayoutParams(1, 1)
+            mode?.customView = view
+            
+            val selectionStart = textView.selectionStart
+            val selectionEnd = textView.selectionEnd
+            if (selectionEnd > selectionStart) {
+                val selectedText = textView.text.toString().substring(selectionStart, selectionEnd)
+                onSelectionEvent("CUSTOM_MODE", selectedText)
+            }
+            return true
+        }
+
+        // Standard behavior: populate native menu
         menuOptions.forEachIndexed { index, option ->
           menu?.add(0, index, 0, option)
         }
@@ -75,7 +97,7 @@ class SelectableTextView : FrameLayout {
       }
       
       override fun onDestroyActionMode(mode: ActionMode?) {
-        // Limpa a referência quando o próprio usuário fecha o menu tocando fora
+        // Clear the reference when the user closes the menu by tapping outside
         currentActionMode = null
       }
     }
@@ -102,13 +124,13 @@ class SelectableTextView : FrameLayout {
   }
 
   // ====================================================================
-  // A CIRURGIA DE SEGURANÇA (Prevenção do Bug das Views que Somem)
+  // SAFETY FIX (Preventing the disappearing views bug)
   // ====================================================================
   override fun onDetachedFromWindow() {
     super.onDetachedFromWindow()
-    // Se o React Native decidir remover essa View da tela (scroll ou navegação)
-    // e a barra nativa ainda estiver aberta, nós a fechamos à força.
-    // Isso devolve a memória e libera a UI Thread do Android.
+    // If React Native decides to remove this View from the screen (scroll or navigation)
+    // and the native bar is still open, we force it to close.
+    // This frees up memory and releases the Android UI Thread.
     currentActionMode?.finish()
     currentActionMode = null
   }

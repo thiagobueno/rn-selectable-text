@@ -239,42 +239,26 @@ static std::string safeStdString(NSString *str) {
 #pragma mark - UITextViewDelegate
 
 // ====================================================================
-// REAL-TIME CUSTOM MODE TRACKING (With Crash Prevention bounds check)
+// TOUCH-UP DETECTION & DEBOUNCE LOGIC
 // ====================================================================
 - (void)textViewDidChangeSelection:(UITextView *)textView
 {
+    // CANCEL PREVIOUS TIMERS: If user is still dragging, reset the clock
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(emitCustomModeEventOrShowMenu) object:nil];
+
     if (textView.selectedRange.location != NSNotFound && textView.selectedRange.length > 0) {
         
-        // SAFE BOUNDS CHECK: Prevents iOS 15/17/18 out-of-bounds crash
-        NSString *selectedText = @"";
-        if (textView.selectedRange.location + textView.selectedRange.length <= textView.text.length) {
-            selectedText = [textView.text substringWithRange:textView.selectedRange];
-        }
-        
-        // INVISIBLE MODE (ALL IOS VERSIONS)
-        if (_menuOptions.count == 0) {
-            if (auto eventEmitter = std::static_pointer_cast<const SelectableTextViewEventEmitter>(_eventEmitter)) {
-                SelectableTextViewEventEmitter::OnSelection selectionEvent = {
-                    .chosenOption = "CUSTOM_MODE",
-                    .highlightedText = safeStdString(selectedText)
-                };
-                eventEmitter->onSelection(selectionEvent);
-            }
-            return;
-        }
-        
-        // STANDARD MODE
         if (@available(iOS 16.0, *)) {
+            // iOS 16+: Do nothing during drag. The event will fire perfectly on 'Touch Up' inside editMenuForTextInRange.
             return;
         } else {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self showCustomMenu];
-            });
+            // iOS 15: Debounce timer. Waits 0.4s after the user stops dragging before firing the event.
+            [self performSelector:@selector(emitCustomModeEventOrShowMenu) withObject:nil afterDelay:0.4];
         }
     } else {
         [[UIMenuController sharedMenuController] hideMenuFromView:_customTextView];
         
-        // IF SELECTION IS CLEARED, NOTIFY JS TO HIDE THE BOTTOM SHEET
+        // IF SELECTION IS CLEARED, NOTIFY JS IMMEDIATELY
         if (_menuOptions.count == 0) {
              if (auto eventEmitter = std::static_pointer_cast<const SelectableTextViewEventEmitter>(_eventEmitter)) {
                 SelectableTextViewEventEmitter::OnSelection selectionEvent = {
@@ -287,8 +271,33 @@ static std::string safeStdString(NSString *str) {
     }
 }
 
+- (void)emitCustomModeEventOrShowMenu {
+    if (_customTextView.selectedRange.location == NSNotFound || _customTextView.selectedRange.length == 0) {
+        return;
+    }
+
+    if (_menuOptions.count == 0) {
+        // INVISIBLE MODE: Emit event on touch up
+        NSString *selectedText = @"";
+        if (_customTextView.selectedRange.location + _customTextView.selectedRange.length <= _customTextView.text.length) {
+            selectedText = [_customTextView.text substringWithRange:_customTextView.selectedRange];
+        }
+
+        if (auto eventEmitter = std::static_pointer_cast<const SelectableTextViewEventEmitter>(_eventEmitter)) {
+            SelectableTextViewEventEmitter::OnSelection selectionEvent = {
+                .chosenOption = "CUSTOM_MODE",
+                .highlightedText = safeStdString(selectedText)
+            };
+            eventEmitter->onSelection(selectionEvent);
+        }
+    } else {
+        // NATIVE MODE: Show the old UIMenuController
+        [self showCustomMenu];
+    }
+}
+
 // ====================================================================
-// THE NEW IOS 16+ API
+// THE NEW IOS 16+ API (FIRES ONLY ON TOUCH UP)
 // ====================================================================
 - (UIMenu *)textView:(UITextView *)textView editMenuForTextInRange:(NSRange)range suggestedActions:(NSArray<UIMenuElement *> *)suggestedActions API_AVAILABLE(ios(16.0)) {
     
@@ -349,7 +358,6 @@ static std::string safeStdString(NSString *str) {
     
     CGRect selectedRect = [_customTextView firstRectForRange:_customTextView.selectedTextRange];
     
-    // CRASH PREVENTION: Validate rect before showing menu (iOS 15 safety)
     if (!CGRectIsEmpty(selectedRect) && !CGRectIsNull(selectedRect) && !CGRectIsInfinite(selectedRect)) {
         CGRect targetRect = [_customTextView convertRect:selectedRect toView:_customTextView];
         [menuController showMenuFromView:_customTextView rect:targetRect];
@@ -396,7 +404,6 @@ static std::string safeStdString(NSString *str) {
     NSString *selectorName = NSStringFromSelector(anInvocation.selector);
     
     if ([selectorName hasPrefix:@"customAction_"] && [selectorName hasSuffix:@":"]) {
-        // CRASH PREVENTION: Validate selector length before cutting string
         if (selectorName.length > 14) {
             NSString *cleanedOption = [selectorName substringWithRange:NSMakeRange(13, selectorName.length - 14)];
             
@@ -426,7 +433,6 @@ static std::string safeStdString(NSString *str) {
     NSRange selectedRange = _customTextView.selectedRange;
     NSString *selectedText = @"";
     
-    // SAFE BOUNDS CHECK
     if (selectedRange.location != NSNotFound && selectedRange.length > 0 && (selectedRange.location + selectedRange.length <= _customTextView.text.length)) {
         selectedText = [_customTextView.text substringWithRange:selectedRange];
     }
